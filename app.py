@@ -416,26 +416,104 @@ def render_predict():
 # ----------------------------------------------------------------------
 # CHAT PAGE — quick option buttons + free-text chat, same local LLM
 # ----------------------------------------------------------------------
+# ----------------------------------------------------------------------
+# CHAT PAGE — quick option buttons + keyword-aware free-text chat
+# ----------------------------------------------------------------------
+# Replace EVERYTHING from the "# CHAT PAGE" comment down to (but not
+# including) the "# ROUTER" comment in your app.py with this whole block.
+# It is fully self-contained — nothing else needs to exist elsewhere.
+
 CHAT_OPTIONS = [
     "🥦 Healthy meal ideas",
     "💰 Tips to save money",
     "🎉 What's on sale today?",
     "🍽️ Help me plan dinner",
 ]
- 
+
 PRODUCT_NAMES = [p["name"] for p in PRODUCTS]
- 
- 
+
+
 def pick_item(cart, exclude=None):
+    """Pick a product to mention — prefer something already in the shopper's
+    cart, otherwise a random product from the store."""
     pool = [n for n in (cart.keys() if cart else PRODUCT_NAMES) if n != exclude] or PRODUCT_NAMES
     return random.choice(pool)
- 
- 
-# (keep your existing CHAT_FALLBACKS and GENERIC_FALLBACKS dicts exactly as they are)
- 
- 
+
+
+# 10+ varied responses per quick option. Each is a template that gets filled
+# in with a product name — pulled from the shopper's own cart when they have
+# one, otherwise a random item from the store, so answers feel tailored.
+CHAT_FALLBACKS = {
+    "🥦 Healthy meal ideas": [
+        "Try a quick stir-fry with {item} — light, fresh, and ready in under 20 minutes.",
+        "A big salad topped with {item} is an easy way to keep dinner light but filling.",
+        "Pair {item} with some Garden Veggies for a simple, balanced plate.",
+        "Grilled {item} with a side salad is a lean, protein-packed option.",
+        "For a healthy twist, try roasting {item} with a drizzle of olive oil and herbs.",
+        "A veggie-forward bowl with {item} and Fresh Apples on the side makes a great light meal.",
+        "Steamed {item} with a squeeze of lemon is quick, healthy, and keeps things simple.",
+        "Swap heavier sides for {item} — it's a lighter way to round out any meal.",
+        "A sheet-pan dinner with {item} and Garden Veggies is healthy and barely any cleanup.",
+        "Try {item} in a wrap with fresh veggies for a quick, nutritious lunch.",
+        "Overnight oats with a side of Fresh Apples is a great light, healthy breakfast option.",
+    ],
+    "💰 Tips to save money": [
+        "Stock up on store-brand staples like {item} — small swaps like that add up fast.",
+        "Check the deals aisle before you shop — combining loyalty discounts with basics like {item} can cut your basket cost by up to 20%.",
+        "Buying {item} in bulk when it's on sale is one of the easiest ways to save over time.",
+        "Plan meals around what's discounted this week — {item} is a great budget-friendly pick right now.",
+        "Skip the pricier convenience items and build meals around basics like {item} instead.",
+        "Our loyalty program stacks with weekly deals — worth checking before you add {item} to your cart.",
+        "Buying {item} instead of a pre-made version is usually cheaper and just as good.",
+        "Meal-prepping with staples like {item} at the start of the week helps avoid impulse buys.",
+        "Keep an eye on the weekly flyer — items like {item} often go on rotation for discounts.",
+        "A shopping list built around {item} and other staples keeps your basket predictable and affordable.",
+        "Store-brand versions of {item} are usually just as good and noticeably cheaper.",
+    ],
+    "🎉 What's on sale today?": [
+        "We've got a great price on {item} this week — worth grabbing while it lasts.",
+        "{item} is one of today's featured deals — check the Shopping page for the full list.",
+        "Keep an eye on {item} — it's discounted as part of our weekly picks right now.",
+        "Today's standout deal is on {item} — head to the Shopping page to see it.",
+        "{item} just got marked down — it's on the Shopping page along with the rest of today's picks.",
+        "We're running a special on {item} this week, plus a few other staples worth checking out.",
+        "If you're stocking up, now's a good time — {item} is discounted on the Shopping page.",
+        "{item} is part of today's deals lineup — take a look at the Shopping page for more.",
+        "There's a nice markdown on {item} right now, along with a few other weekly picks.",
+        "Today's picks include a deal on {item} — swing by the Shopping page to see everything on offer.",
+        "{item} and a few other essentials are discounted this week — worth adding to your cart.",
+    ],
+    "🍽️ Help me plan dinner": [
+        "How about {item} with a side of Garden Veggies and some warm Bakery Bread?",
+        "{item} paired with a fresh salad makes for an easy, satisfying dinner.",
+        "Try building tonight's dinner around {item} — quick to prep and always a solid choice.",
+        "{item} with roasted veggies and rice is a simple, filling dinner idea.",
+        "For something a bit special, pair {item} with House Wine and Garden Veggies.",
+        "A one-pan dinner with {item} and Garden Veggies keeps things easy on a weeknight.",
+        "{item} grilled with a side of Bakery Bread is a quick, comforting dinner.",
+        "Build tonight's plate around {item} — add a starch and a veggie and you're set.",
+        "{item} with a light salad is a great no-fuss dinner for a busy night.",
+        "Try pairing {item} with Sweet Treats for dessert to round out the meal.",
+        "{item} is a solid base for tonight — pair it with whatever veggies you have on hand.",
+    ],
+}
+
+GENERIC_FALLBACKS = [
+    "Great question! Check out our Shopping page — today's picks include fresh produce, bakery, meat, and more.",
+    "I'd suggest browsing our weekly picks on the Shopping page — there's usually something for every craving there.",
+    "Not sure I caught all of that, but our Shopping page has fresh groceries, pantry staples, and weekly deals worth a look.",
+    "Happy to help! For specifics on products or deals, the Shopping page is the best place to check.",
+    "Good question — I'd start with the Shopping page, it's got everything organized by today's picks.",
+    "I might not have a perfect answer for that, but our Shopping page is a great place to browse for ideas.",
+    "That's a bit outside what I know, but our team keeps the Shopping page updated with fresh options daily.",
+    "Let me point you to the Shopping page — you'll find fresh produce, meat, bakery, and more to choose from.",
+    "I'd recommend checking out today's picks on the Shopping page for something that fits what you're after.",
+    "Not 100% sure on that one, but browsing the Shopping page usually turns up something good!",
+]
+
 # ----------------------------------------------------------------------
-# NEW: small keyword-based intent classifier
+# Keyword-based intent classifier — this is what makes free-typed
+# messages get a response that actually matches what was typed.
 # ----------------------------------------------------------------------
 GREETING_WORDS = ["hi", "hello", "hey", "yo", "sup", "good morning", "good afternoon", "good evening"]
 THANKS_WORDS = ["thanks", "thank you", "thx", "appreciate", "cheers"]
@@ -443,7 +521,7 @@ BYE_WORDS = ["bye", "goodbye", "see you", "later", "gotta go"]
 CART_WORDS = ["cart", "basket", "what's in my", "what have i added", "how much do i owe"]
 HOURS_WORDS = ["hours", "open", "close", "closing time", "opening time", "what time"]
 DELIVERY_WORDS = ["deliver", "delivery", "shipping", "ship", "pickup", "pick up"]
- 
+
 KEYWORD_INTENTS = {
     "🥦 Healthy meal ideas": [
         "healthy", "diet", "light", "salad", "veg", "vegetable", "low calorie",
@@ -462,14 +540,14 @@ KEYWORD_INTENTS = {
         "what should i eat", "plan a meal", "food ideas",
     ],
 }
- 
- 
+
+
 def classify_message(user_message):
-    """Return an intent key for a typed message, or None if nothing matches.
+    """Return an intent for a typed message, or None if nothing matches.
     Checked in order: greeting/thanks/bye -> cart/hours/delivery ->
     product name mention -> the 4 quick-reply categories."""
     msg = user_message.lower().strip()
- 
+
     if any(w in msg for w in GREETING_WORDS):
         return "greeting"
     if any(w in msg for w in THANKS_WORDS):
@@ -482,21 +560,21 @@ def classify_message(user_message):
         return "hours"
     if any(w in msg for w in DELIVERY_WORDS):
         return "delivery"
- 
+
     # product name / partial name mention, e.g. "how much is the milk?"
     for p in PRODUCTS:
         name = p["name"].lower()
         core_words = [w for w in name.replace("fresh ", "").replace("prime ", "").split() if len(w) > 3]
         if name in msg or any(w in msg for w in core_words):
             return ("product", p["name"])
- 
+
     for intent, words in KEYWORD_INTENTS.items():
         if any(w in msg for w in words):
             return intent
- 
+
     return None
- 
- 
+
+
 GREETING_RESPONSES = [
     "Hey there! 👋 Welcome to GreenMart — ask me about deals, meal ideas, saving money, or what's in your cart.",
     "Hi! Happy to help — looking for meal ideas, today's deals, or a few money-saving tips?",
@@ -517,28 +595,28 @@ HOURS_RESPONSES = [
 DELIVERY_RESPONSES = [
     "We offer delivery on most orders — add items to your cart and choose delivery at checkout.",
 ]
- 
- 
+
+
 def cart_summary_response(cart):
     if not cart:
         return "Your cart's empty right now — head to the Shopping page to add something!"
     lines = [f"{n} x{q}" for n, q in cart.items()]
     total = sum(next(p["price"] for p in PRODUCTS if p["name"] == n) * q for n, q in cart.items())
     return f"Here's what's in your cart: {', '.join(lines)} — total ${total:.2f}. Ready to check out?"
- 
- 
+
+
 def product_response(name, cart):
     price = next(p["price"] for p in PRODUCTS if p["name"] == name)
     in_cart = cart.get(name, 0)
     if in_cart:
         return f"{name} is ${price:.2f} — looks like you've already got {in_cart} in your cart!"
     return f"{name} is ${price:.2f} — want to add it? Head to the Shopping page to grab it."
- 
- 
+
+
 def get_chat_response(user_message, cart=None):
     cart = cart or {}
     intent = classify_message(user_message)
- 
+
     if intent == "greeting":
         return random.choice(GREETING_RESPONSES)
     if intent == "thanks":
@@ -556,8 +634,9 @@ def get_chat_response(user_message, cart=None):
     if intent in CHAT_FALLBACKS:
         template = random.choice(CHAT_FALLBACKS[intent])
         return template.format(item=pick_item(cart))
- 
-    # No keyword matched — try the local LLM for a more open-ended reply
+
+    # No keyword matched — try the local LLM for a more open-ended reply.
+    # If it can't load (no internet, etc.) this silently falls through.
     prompt = (
         "You are a friendly, helpful assistant for GreenMart, a supermarket. "
         f"Answer briefly and helpfully. Customer says: {user_message}"
@@ -570,8 +649,38 @@ def get_chat_response(user_message, cart=None):
             return text
     except Exception:
         pass
- 
+
     return random.choice(GENERIC_FALLBACKS)
+
+
+def send_chat_message(text):
+    st.session_state.chat_history.append({"role": "user", "content": text})
+    reply = get_chat_response(text, cart=st.session_state.get("cart", {}))
+    st.session_state.chat_history.append({"role": "assistant", "content": reply})
+
+
+def render_chat():
+    st.button("⬅️ Back to Home", on_click=go_home)
+    st.subheader("💬 Chat with GreenMart")
+
+    st.write("Quick questions:")
+    cols = st.columns(len(CHAT_OPTIONS))
+    for i, opt in enumerate(CHAT_OPTIONS):
+        if cols[i].button(opt, key=f"chatopt_{i}", use_container_width=True):
+            send_chat_message(opt)
+            st.rerun()
+
+    for msg in st.session_state.chat_history:
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
+
+    user_input = st.chat_input("Ask me anything about GreenMart...")
+    if user_input:
+        send_chat_message(user_input)
+        st.rerun()
+
+    if st.session_state.chat_history:
+        st.button("🗑️ Clear chat", on_click=lambda: st.session_state.chat_history.clear())
 
 # ----------------------------------------------------------------------
 # ROUTER
