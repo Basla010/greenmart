@@ -1,22 +1,27 @@
 """
 GreenMart — Supermarket Spending Predictor & Smart Recommendations
 --------------------------------------------------------------------
-Run with:  streamlit run app.py
+Run with: streamlit run app.py
 
 Place `marketing_campaign.csv` (the same dataset used in your notebook)
 in the same folder as this script. The app trains the models fresh on
 startup and caches them.
 
+Home screen lets you pick "Shopping" or "Predict" — each opens its own
+page, and you can always go back to Home to switch.
+
+Free LLM recommendations: runs a small open model (flan-t5-small) locally
+inside the app itself — no key, no account, no external server. See the
+"FREE LLM RECOMMENDATION" section below. If the model can't load for any
+reason, it silently falls back to the built-in template engine — so the
+app always works either way.
+
 Best models chosen from your notebook's comparison tables:
-  - Regression : Polynomial Regression (degree=2)  -> R2 = 0.845 (best of Linear/SGD/Ridge/Lasso/Poly)
-  - Clustering : K-Means (k=4)                      -> Silhouette = 0.21 (best of KMeans/KMedoids/DBSCAN/Hierarchical)
-  - Free LLM   : Groq's openai/gpt-oss-20b (free tier) if an API key is supplied; otherwise
-                 built-in template recommendations (always free, no key needed).
+- Regression : Polynomial Regression (degree=2) -> R2 = 0.845 (best of Linear/SGD/Ridge/Lasso/Poly)
+- Clustering : K-Means (k=4) -> Silhouette = 0.21 (best of KMeans/KMedoids/DBSCAN/Hierarchical)
 """
 
-import os
 import random
-import requests
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -28,84 +33,83 @@ from sklearn.cluster import KMeans
 # PAGE CONFIG + THEME (black text only, green & white everywhere else)
 # ----------------------------------------------------------------------
 st.set_page_config(page_title="GreenMart", page_icon="🛒", layout="wide")
-
 st.markdown("""
 <style>
 :root { --green:#1E7D32; --lightgreen:#66BB6A; --white:#FFFFFF; }
-html, body, [class*="css"]  { color:#000000 !important; }
+html, body, [class*="css"] { color:#000000 !important; }
 .stApp { background: linear-gradient(180deg, #FFFFFF 0%, #E9F7EC 100%); }
 h1, h2, h3, h4, h5, p, span, label, div { color:#000000 !important; }
-
 .hero {
-    background: var(--green);
-    padding: 28px; border-radius: 14px; margin-bottom: 20px;
-    text-align:center; border: 3px solid var(--lightgreen);
+  background: var(--green);
+  padding: 28px; border-radius: 14px; margin-bottom: 20px;
+  text-align:center; border: 3px solid var(--lightgreen);
 }
 .hero h1, .hero p { color:#FFFFFF !important; }
-
 .product-card {
-    background:#FFFFFF; border:2px solid var(--green); border-radius:12px;
-    padding:10px; text-align:center; margin-bottom:10px;
+  background:#FFFFFF; border:2px solid var(--green); border-radius:12px;
+  padding:10px; text-align:center; margin-bottom:10px;
 }
 .product-card img { border-radius:8px; }
-
 .cart-box {
-    background:#FFFFFF; border:2px solid var(--green); border-radius:12px; padding:16px;
+  background:#FFFFFF; border:2px solid var(--green); border-radius:12px; padding:16px;
 }
 .credit-card {
-    background: linear-gradient(135deg, var(--green), var(--lightgreen));
-    border-radius:16px; padding:22px; color:#FFFFFF !important; width:100%;
-    box-shadow:0 4px 10px rgba(0,0,0,0.25);
+  background: linear-gradient(135deg, var(--green), var(--lightgreen));
+  border-radius:16px; padding:22px; color:#FFFFFF !important; width:100%;
+  box-shadow:0 4px 10px rgba(0,0,0,0.25);
 }
 .credit-card * { color:#FFFFFF !important; }
-
 .stButton>button {
-    background-color: var(--green); color:#FFFFFF !important; border-radius:8px;
-    border:2px solid var(--green); font-weight:600;
+  background-color: var(--green); color:#FFFFFF !important; border-radius:8px;
+  border:2px solid var(--green); font-weight:600;
 }
 .stButton>button:hover { background-color: var(--lightgreen); border-color:var(--lightgreen); }
-
 .tier-badge {
-    display:inline-block; background:var(--green); color:#FFFFFF !important;
-    padding:6px 14px; border-radius:20px; font-weight:700;
+  display:inline-block; background:var(--green); color:#FFFFFF !important;
+  padding:6px 14px; border-radius:20px; font-weight:700;
 }
 .reco-box {
-    background:#FFFFFF; border-left:6px solid var(--green); border-radius:10px;
-    padding:16px; margin-top:10px;
+  background:#FFFFFF; border-left:6px solid var(--green); border-radius:10px;
+  padding:16px; margin-top:10px;
 }
-
-/* Sidebar: force white/green even if the browser prefers a dark theme */
-[data-testid="stSidebar"] {
-    background-color: #FFFFFF !important;
-    border-right: 3px solid var(--green);
+.home-card {
+  background:#FFFFFF; border:3px solid var(--green); border-radius:16px;
+  padding:36px 20px; text-align:center; margin-bottom:10px;
+  transition: 0.15s;
 }
-[data-testid="stSidebar"] * { color:#000000 !important; }
-
-/* Text inputs everywhere: white field, green border, no red focus ring */
-input, textarea {
-    background-color:#FFFFFF !important;
-    color:#000000 !important;
-    border: 2px solid var(--green) !important;
-    border-radius: 8px !important;
-}
-input:focus, textarea:focus {
-    border-color: var(--lightgreen) !important;
-    box-shadow: 0 0 0 2px var(--lightgreen) !important;
-    outline: none !important;
-}
+.home-card h2 { color:#1E7D32 !important; }
 </style>
 """, unsafe_allow_html=True)
 
 # ----------------------------------------------------------------------
-# HERO / SHOP HEADER
+# SESSION STATE DEFAULTS
 # ----------------------------------------------------------------------
-st.markdown("""
-<div class="hero">
-    <h1>🛒 GreenMart Supermarket</h1>
-    <p>Fresh groceries, smart predictions, and picks made just for you.</p>
-</div>
-""", unsafe_allow_html=True)
+if "page" not in st.session_state:
+    st.session_state.page = "home"          # "home" | "shopping" | "predict" | "chat"
+if "cart" not in st.session_state:
+    st.session_state.cart = {}
+if "profile" not in st.session_state:
+    st.session_state.profile = dict(
+        income=50000, age=40, recency=30, web=4, catalog=2, store=5, webvisits=5, children=1
+    )
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
 
+def go_home():
+    st.session_state.page = "home"
+
+def go_shopping():
+    st.session_state.page = "shopping"
+
+def go_predict():
+    st.session_state.page = "predict"
+
+def go_chat():
+    st.session_state.page = "chat"
+
+# ----------------------------------------------------------------------
+# PRODUCTS
+# ----------------------------------------------------------------------
 PRODUCTS = [
     {"name": "Fresh Apples",     "price": 1.99, "img": "https://images.unsplash.com/photo-1560806887-1e4cd0b6cbd6?w=400"},
     {"name": "Bakery Bread",     "price": 2.49, "img": "https://images.unsplash.com/photo-1509440159596-0249088772ff?w=400"},
@@ -117,80 +121,23 @@ PRODUCTS = [
     {"name": "Sweet Treats",     "price": 4.29, "img": "https://images.unsplash.com/photo-1548907040-4baa419e6e6c?w=400"},
 ]
 
-if "cart" not in st.session_state:
-    st.session_state.cart = {}
-
-st.subheader("🛍️ Today's Picks")
-cols = st.columns(4)
-for i, p in enumerate(PRODUCTS):
-    with cols[i % 4]:
-        st.markdown('<div class="product-card">', unsafe_allow_html=True)
-        st.image(p["img"], use_container_width=True)
-        st.markdown(f"**{p['name']}**  \n${p['price']:.2f}")
-        if st.button("➕ Add to cart", key=f"add_{i}"):
-            st.session_state.cart[p["name"]] = st.session_state.cart.get(p["name"], 0) + 1
-        st.markdown('</div>', unsafe_allow_html=True)
-
-# ----------------------------------------------------------------------
-# CART + CREDIT CARD CHECKOUT
-# ----------------------------------------------------------------------
-left, right = st.columns(2)
-
-with left:
-    st.markdown('<div class="cart-box">', unsafe_allow_html=True)
-    st.subheader("🛒 Your Cart")
-    if not st.session_state.cart:
-        st.write("Your cart is empty — add something above!")
-    else:
-        total = 0.0
-        for name, qty in list(st.session_state.cart.items()):
-            price = next(p["price"] for p in PRODUCTS if p["name"] == name)
-            line = price * qty
-            total += line
-            c1, c2, c3 = st.columns([3, 1, 1])
-            c1.write(f"{name} x{qty}")
-            c2.write(f"${line:.2f}")
-            if c3.button("Remove", key=f"rm_{name}"):
-                del st.session_state.cart[name]
-                st.rerun()
-        st.markdown(f"### Total: ${total:.2f}")
-        if st.button("🗑️ Clear cart"):
-            st.session_state.cart = {}
-            st.rerun()
-    st.markdown('</div>', unsafe_allow_html=True)
-
-with right:
-    st.markdown('<div class="credit-card">', unsafe_allow_html=True)
-    st.subheader("💳 Checkout")
-    card_name = st.text_input("Cardholder name", placeholder="Jane Doe")
-    card_num = st.text_input("Card number", placeholder="1234 5678 9012 3456", max_chars=19)
-    c1, c2 = st.columns(2)
-    exp = c1.text_input("Expiry (MM/YY)", placeholder="08/29")
-    cvv = c2.text_input("CVV", placeholder="123", max_chars=4, type="password")
-    if st.button("✅ Pay Now"):
-        if card_name and card_num and exp and cvv:
-            st.success("Payment simulated successfully — thanks for shopping with GreenMart! (Demo only, no real charge)")
-        else:
-            st.warning("Please fill in all card fields.")
-    st.markdown('</div>', unsafe_allow_html=True)
-
-st.divider()
-
 # ----------------------------------------------------------------------
 # MODEL TRAINING (cached) — Polynomial Regression + KMeans clustering
 # ----------------------------------------------------------------------
 REG_FEATURES = ["Income", "Age", "Recency", "NumWebPurchases",
                  "NumCatalogPurchases", "NumStorePurchases",
                  "NumWebVisitsMonth", "Total_Children"]
+
 CLUSTER_FEATURES = ["Income", "Age", "Total_Spend", "Recency",
                      "Total_Purchases", "Total_Children"]
-TIER_NAMES = ["Budget Shopper", "Steady Shopper", "Premium Shopper", "VIP Big Spender"]
 
+TIER_NAMES = ["Budget Shopper", "Steady Shopper", "Premium Shopper", "VIP Big Spender"]
 
 @st.cache_resource(show_spinner="Training models on your dataset...")
 def load_and_train(csv_path="marketing_campaign.csv"):
     df = pd.read_csv(csv_path, sep=None, engine="python")
     df["Income"] = df["Income"].fillna(df["Income"].median())
+
     spend_cols = ["MntWines", "MntFruits", "MntMeatProducts",
                   "MntFishProducts", "MntSweetProducts", "MntGoldProds"]
     df["Total_Spend"] = df[spend_cols].sum(axis=1)
@@ -223,168 +170,300 @@ def load_and_train(csv_path="marketing_campaign.csv"):
         "cluster_scaler": cluster_scaler, "kmeans": kmeans, "tier_map": tier_map,
     }
 
-
 try:
     models = load_and_train()
     MODELS_READY = True
 except FileNotFoundError:
     MODELS_READY = False
-    st.error("Couldn't find `marketing_campaign.csv` next to app.py. "
-              "Add it to the same folder and reload the page.")
 
 # ----------------------------------------------------------------------
-# CUSTOMER PROFILE + PREDICTION
+# FREE LLM RECOMMENDATION — a small model running inside the app itself
 # ----------------------------------------------------------------------
-st.subheader("🔮 Predict a Customer's Spending")
+# No key, no external server, no separate install like Ollama. This loads
+# a small open-source model (google/flan-t5-small, ~300MB) straight from
+# Hugging Face the first time the app runs, then caches it in memory.
+# It downloads once automatically (no account/token needed for public
+# models) and after that runs 100% locally and free — including on most
+# hosting, since it's just a Python dependency, not a background service.
+# Add to requirements.txt:  transformers  torch  sentencepiece
+@st.cache_resource(show_spinner="Loading local model (first run only, ~300MB)...")
+def load_llm():
+    from transformers import pipeline
+    return pipeline("text2text-generation", model="google/flan-t5-small")
+FALLBACK_TIPS = {
+    "Budget Shopper": [
+        "Since every dollar counts for you, our weekly deals and store-brand basics (bread, milk, veggies) "
+        "will stretch your budget the furthest. Look out for our discount bundle on staples this week!",
+        "You shop smart! Combining our loyalty discounts with store-brand groceries can cut your basket cost "
+        "by up to 20% — check the deals aisle first.",
+    ],
+    "Steady Shopper": [
+        "You buy consistently, so a small basket top-up of fresh produce and bakery items keeps your pantry "
+        "stocked without breaking routine — try our fresh veggie box this week.",
+        "A regular shopper like you might enjoy our mid-range meal kits — quick, balanced, and priced right "
+        "for your usual basket.",
+    ],
+    "Premium Shopper": [
+        "You enjoy quality — our premium meat cuts and fresh fish fillets pair perfectly with a bottle from "
+        "our house wine selection for a great evening in.",
+        "Treat yourself: our curated cheese and wine selection is a favorite with shoppers like you.",
+    ],
+    "VIP Big Spender": [
+        "As one of our top shoppers, you get early access to premium imports, gourmet gift boxes, and our "
+        "finest wine selection — ask about our VIP loyalty perks at checkout!",
+        "You deserve the best — our exclusive gold-tier gift hampers and prime cuts are curated with you in mind.",
+    ],
+}
 
-if "profile" not in st.session_state:
-    st.session_state.profile = dict(
-        income=50000, age=40, recency=30, web=4, catalog=2, store=5, webvisits=5, children=1
+def fallback_recommendation(tier):
+    return random.choice(FALLBACK_TIPS[tier])
+
+def get_recommendation(tier, spend, profile):
+    prompt = (
+        f"Write a short, warm supermarket shopping recommendation (max 3 sentences) for a "
+        f"'{tier}' customer with predicted spend ${spend:.2f}, income ${profile['income']}, "
+        f"age {profile['age']}, {profile['children']} children at home. "
+        "Suggest 1-2 concrete products."
     )
+    try:
+        llm = load_llm()
+        result = llm(prompt, max_new_tokens=80, do_sample=True, temperature=0.8)
+        text = result[0]["generated_text"].strip()
+        if text:
+            return text
+    except Exception:
+        pass
+    return fallback_recommendation(tier)
 
-def randomize():
-    st.session_state.profile = dict(
-        income=random.randint(10000, 120000),
-        age=random.randint(20, 80),
-        recency=random.randint(0, 100),
-        web=random.randint(0, 15),
-        catalog=random.randint(0, 15),
-        store=random.randint(0, 15),
-        webvisits=random.randint(0, 15),
-        children=random.randint(0, 3),
-    )
+# ----------------------------------------------------------------------
+# HOME PAGE
+# ----------------------------------------------------------------------
+def render_home():
+    st.markdown("""
+    <div class="hero">
+        <h1>🛒 GreenMart Supermarket</h1>
+        <p>Fresh groceries, smart predictions, and picks made just for you.</p>
+    </div>
+    """, unsafe_allow_html=True)
 
-st.button("🎲 Randomize customer", on_click=randomize)
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown("""
+        <div class="home-card">
+            <h2>🛍️ Shopping</h2>
+            <p>Browse products, build your cart, and check out.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        st.button("Go Shopping", use_container_width=True, on_click=go_shopping, key="home_shop_btn")
+    with c2:
+        st.markdown("""
+        <div class="home-card">
+            <h2>🔮 Predict</h2>
+            <p>Enter a customer profile and predict spending + segment.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        st.button("Go Predict", use_container_width=True, on_click=go_predict, key="home_predict_btn")
+    with c3:
+        st.markdown("""
+        <div class="home-card">
+            <h2>💬 Chat</h2>
+            <p>Ask our assistant for meal ideas, deals, and tips.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        st.button("Start Chat", use_container_width=True, on_click=go_chat, key="home_chat_btn")
 
-p = st.session_state.profile
-c1, c2, c3, c4 = st.columns(4)
-income = c1.number_input("Income ($/yr)", 0, 500000, p["income"], step=1000)
-age = c2.number_input("Age", 18, 100, p["age"])
-recency = c3.number_input("Days since last purchase", 0, 365, p["recency"])
-children = c4.number_input("Total children at home", 0, 5, p["children"])
+# ----------------------------------------------------------------------
+# SHOPPING PAGE
+# ----------------------------------------------------------------------
+def render_shopping():
+    st.button("⬅️ Back to Home", on_click=go_home)
+    st.subheader("🛍️ Today's Picks")
 
-c5, c6, c7 = st.columns(3)
-web = c5.number_input("Web purchases (past period)", 0, 50, p["web"])
-catalog = c6.number_input("Catalog purchases", 0, 50, p["catalog"])
-store = c7.number_input("In-store purchases", 0, 50, p["store"])
-webvisits = st.number_input("Web visits / month", 0, 30, p["webvisits"])
+    cols = st.columns(4)
+    for i, p in enumerate(PRODUCTS):
+        with cols[i % 4]:
+            st.markdown('<div class="product-card">', unsafe_allow_html=True)
+            st.image(p["img"], use_container_width=True)
+            st.markdown(f"**{p['name']}** \n${p['price']:.2f}")
+            if st.button("➕ Add to cart", key=f"add_{i}"):
+                st.session_state.cart[p["name"]] = st.session_state.cart.get(p["name"], 0) + 1
+            st.markdown('</div>', unsafe_allow_html=True)
 
-if st.button("📈 Predict spending & get recommendation", type="primary") and MODELS_READY:
-    x_new = pd.DataFrame([{
-        "Income": income, "Age": age, "Recency": recency,
-        "NumWebPurchases": web, "NumCatalogPurchases": catalog,
-        "NumStorePurchases": store, "NumWebVisitsMonth": webvisits,
-        "Total_Children": children,
-    }])[REG_FEATURES]
-
-    x_new_poly = models["poly"].transform(x_new)
-    predicted_spend = max(0, float(models["reg_model"].predict(x_new_poly)[0]))
-
-    total_purchases = web + catalog + store
-    cluster_row = pd.DataFrame([{
-        "Income": income, "Age": age, "Total_Spend": predicted_spend,
-        "Recency": recency, "Total_Purchases": total_purchases, "Total_Children": children,
-    }])[CLUSTER_FEATURES]
-    cluster_scaled = models["cluster_scaler"].transform(cluster_row)
-    cluster_id = int(models["kmeans"].predict(cluster_scaled)[0])
-    tier = models["tier_map"][cluster_id]
-
-    st.session_state.result = {
-        "predicted_spend": predicted_spend, "tier": tier,
-        "profile": dict(income=income, age=age, recency=recency, children=children,
-                         web=web, catalog=catalog, store=store, webvisits=webvisits),
-    }
-
-if "result" in st.session_state:
-    r = st.session_state.result
-    m1, m2 = st.columns(2)
-    m1.metric("Predicted total spend", f"${r['predicted_spend']:.2f}")
-    m2.markdown(f"Customer segment:<br><span class='tier-badge'>{r['tier']}</span>", unsafe_allow_html=True)
-
-    # ------------------------------------------------------------------
-    # FREE LLM RECOMMENDATION
-    # Uses Groq's free API if a key is provided in the sidebar; otherwise
-    # falls back to a built-in template engine that needs no key at all,
-    # so recommendations always work for free.
-    # ------------------------------------------------------------------
-    FALLBACK_TIPS = {
-        "Budget Shopper": [
-            "Since every dollar counts for you, our weekly deals and store-brand basics (bread, milk, veggies) "
-            "will stretch your budget the furthest. Look out for our discount bundle on staples this week!",
-            "You shop smart! Combining our loyalty discounts with store-brand groceries can cut your basket cost "
-            "by up to 20% — check the deals aisle first.",
-        ],
-        "Steady Shopper": [
-            "You buy consistently, so a small basket top-up of fresh produce and bakery items keeps your pantry "
-            "stocked without breaking routine — try our fresh veggie box this week.",
-            "A regular shopper like you might enjoy our mid-range meal kits — quick, balanced, and priced right "
-            "for your usual basket.",
-        ],
-        "Premium Shopper": [
-            "You enjoy quality — our premium meat cuts and fresh fish fillets pair perfectly with a bottle from "
-            "our house wine selection for a great evening in.",
-            "Treat yourself: our curated cheese and wine selection is a favorite with shoppers like you.",
-        ],
-        "VIP Big Spender": [
-            "As one of our top shoppers, you get early access to premium imports, gourmet gift boxes, and our "
-            "finest wine selection — ask about our VIP loyalty perks at checkout!",
-            "You deserve the best — our exclusive gold-tier gift hampers and prime cuts are curated with you in mind.",
-        ],
-    }
-
-    def fallback_recommendation(tier):
-        return random.choice(FALLBACK_TIPS[tier])
-
-    def get_recommendation(tier, spend, profile, api_key):
-        prompt = (
-            f"A supermarket customer belongs to the '{tier}' segment with a predicted total "
-            f"spend of ${spend:.2f}. Their profile: income ${profile['income']}, age {profile['age']}, "
-            f"{profile['children']} children at home, buys via web/catalog/store "
-            f"{profile['web']}/{profile['catalog']}/{profile['store']} times. "
-            "Write a short (3 sentences max), warm, personalized supermarket shopping recommendation "
-            "with 1-2 concrete product suggestions."
-        )
-        if api_key:
-            try:
-                resp = requests.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    json={
-                        "model": "openai/gpt-oss-20b",
-                        "messages": [{"role": "user", "content": prompt}],
-                        "temperature": 0.7,
-                        "max_tokens": 150,
-                    },
-                    timeout=15,
-                )
-                if resp.status_code == 200:
-                    text = resp.json()["choices"][0]["message"]["content"].strip()
-                    return text, "groq", None
-                else:
-                    return fallback_recommendation(tier), "fallback", f"Groq returned HTTP {resp.status_code}: {resp.text[:200]}"
-            except Exception as e:
-                return fallback_recommendation(tier), "fallback", f"Groq request failed: {e}"
-        return fallback_recommendation(tier), "fallback", None
-
-    with st.sidebar:
-        st.header("🤖 Recommendation engine")
-        # Key is pulled from Streamlit secrets or an environment variable —
-        # the end user never sees or enters it. Falls back to free
-        # built-in templates automatically if no key is configured.
-        try:
-            groq_key = st.secrets.get("GROQ_API_KEY", "")
-        except Exception:
-            groq_key = ""
-        if not groq_key:
-            groq_key = os.environ.get("GROQ_API_KEY", "")
-        if groq_key:
-            st.caption("✅ Smart LLM recommendations enabled.")
+    left, right = st.columns(2)
+    with left:
+        st.markdown('<div class="cart-box">', unsafe_allow_html=True)
+        st.subheader("🛒 Your Cart")
+        if not st.session_state.cart:
+            st.write("Your cart is empty — add something above!")
         else:
-            st.caption("Using free built-in recommendation templates.")
+            total = 0.0
+            for name, qty in list(st.session_state.cart.items()):
+                price = next(p["price"] for p in PRODUCTS if p["name"] == name)
+                line = price * qty
+                total += line
+                c1, c2, c3 = st.columns([3, 1, 1])
+                c1.write(f"{name} x{qty}")
+                c2.write(f"${line:.2f}")
+                if c3.button("Remove", key=f"rm_{name}"):
+                    del st.session_state.cart[name]
+                    st.rerun()
+            st.markdown(f"### Total: ${total:.2f}")
+            if st.button("🗑️ Clear cart"):
+                st.session_state.cart = {}
+                st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    recommendation, source, error = get_recommendation(r["tier"], r["predicted_spend"], r["profile"], groq_key)
-    source_label = "🤖 Generated by Groq LLM" if source == "groq" else "📋 Built-in free template"
-    st.markdown(f'<div class="reco-box">💬 <b>Recommended for you</b> <i>({source_label})</i>:<br>{recommendation}</div>',
-                unsafe_allow_html=True)
-    if error:
-        st.warning(f"Couldn't reach Groq, used the fallback instead. Details: {error}")
+    with right:
+        st.markdown('<div class="credit-card">', unsafe_allow_html=True)
+        st.subheader("💳 Checkout")
+        card_name = st.text_input("Cardholder name", placeholder="Jane Doe")
+        card_num = st.text_input("Card number", placeholder="1234 5678 9012 3456", max_chars=19)
+        c1, c2 = st.columns(2)
+        exp = c1.text_input("Expiry (MM/YY)", placeholder="08/29")
+        cvv = c2.text_input("CVV", placeholder="123", max_chars=4, type="password")
+        if st.button("✅ Pay Now"):
+            if card_name and card_num and exp and cvv:
+                st.success("Payment simulated successfully — thanks for shopping with GreenMart! (Demo only, no real charge)")
+            else:
+                st.warning("Please fill in all card fields.")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+# ----------------------------------------------------------------------
+# PREDICT PAGE
+# ----------------------------------------------------------------------
+def render_predict():
+    st.button("⬅️ Back to Home", on_click=go_home)
+
+    if not MODELS_READY:
+        st.error("Couldn't find `marketing_campaign.csv` next to app.py. "
+                  "Add it to the same folder and reload the page.")
+        return
+
+    st.subheader("🔮 Predict a Customer's Spending")
+
+    def randomize():
+        st.session_state.profile = dict(
+            income=random.randint(10000, 120000),
+            age=random.randint(20, 80),
+            recency=random.randint(0, 100),
+            web=random.randint(0, 15),
+            catalog=random.randint(0, 15),
+            store=random.randint(0, 15),
+            webvisits=random.randint(0, 15),
+            children=random.randint(0, 3),
+        )
+
+    st.button("🎲 Randomize customer", on_click=randomize)
+
+    p = st.session_state.profile
+    c1, c2, c3, c4 = st.columns(4)
+    income = c1.number_input("Income ($/yr)", 0, 500000, p["income"], step=1000)
+    age = c2.number_input("Age", 18, 100, p["age"])
+    recency = c3.number_input("Days since last purchase", 0, 365, p["recency"])
+    children = c4.number_input("Total children at home", 0, 5, p["children"])
+
+    c5, c6, c7 = st.columns(3)
+    web = c5.number_input("Web purchases (past period)", 0, 50, p["web"])
+    catalog = c6.number_input("Catalog purchases", 0, 50, p["catalog"])
+    store = c7.number_input("In-store purchases", 0, 50, p["store"])
+    webvisits = st.number_input("Web visits / month", 0, 30, p["webvisits"])
+
+    if st.button("📈 Predict spending & get recommendation", type="primary"):
+        x_new = pd.DataFrame([{
+            "Income": income, "Age": age, "Recency": recency,
+            "NumWebPurchases": web, "NumCatalogPurchases": catalog,
+            "NumStorePurchases": store, "NumWebVisitsMonth": webvisits,
+            "Total_Children": children,
+        }])[REG_FEATURES]
+        x_new_poly = models["poly"].transform(x_new)
+        predicted_spend = max(0, float(models["reg_model"].predict(x_new_poly)[0]))
+
+        total_purchases = web + catalog + store
+        cluster_row = pd.DataFrame([{
+            "Income": income, "Age": age, "Total_Spend": predicted_spend,
+            "Recency": recency, "Total_Purchases": total_purchases, "Total_Children": children,
+        }])[CLUSTER_FEATURES]
+        cluster_scaled = models["cluster_scaler"].transform(cluster_row)
+        cluster_id = int(models["kmeans"].predict(cluster_scaled)[0])
+        tier = models["tier_map"][cluster_id]
+
+        st.session_state.result = {
+            "predicted_spend": predicted_spend, "tier": tier,
+            "profile": dict(income=income, age=age, recency=recency, children=children,
+                             web=web, catalog=catalog, store=store, webvisits=webvisits),
+        }
+
+    if "result" in st.session_state:
+        r = st.session_state.result
+        m1, m2 = st.columns(2)
+        m1.metric("Predicted total spend", f"${r['predicted_spend']:.2f}")
+        m2.markdown(f"Customer segment:<br><span class='tier-badge'>{r['tier']}</span>", unsafe_allow_html=True)
+
+        recommendation = get_recommendation(r["tier"], r["predicted_spend"], r["profile"])
+        st.markdown(f'<div class="reco-box">💬 <b>Recommended for you:</b><br>{recommendation}</div>',
+                    unsafe_allow_html=True)
+
+# ----------------------------------------------------------------------
+# CHAT PAGE — quick option buttons + free-text chat, same local LLM
+# ----------------------------------------------------------------------
+CHAT_OPTIONS = [
+    "🥦 Healthy meal ideas",
+    "💰 Tips to save money",
+    "🎉 What's on sale today?",
+    "🍽️ Help me plan dinner",
+]
+
+def get_chat_response(user_message):
+    prompt = (
+        "You are a friendly, helpful assistant for GreenMart, a supermarket. "
+        f"Answer briefly and helpfully. Customer says: {user_message}"
+    )
+    try:
+        llm = load_llm()
+        result = llm(prompt, max_new_tokens=100, do_sample=True, temperature=0.7)
+        text = result[0]["generated_text"].strip()
+        if text:
+            return text
+    except Exception:
+        pass
+    return "I couldn't think of anything right now — try browsing our Shopping page for today's picks!"
+
+def send_chat_message(text):
+    st.session_state.chat_history.append({"role": "user", "content": text})
+    reply = get_chat_response(text)
+    st.session_state.chat_history.append({"role": "assistant", "content": reply})
+
+def render_chat():
+    st.button("⬅️ Back to Home", on_click=go_home)
+    st.subheader("💬 Chat with GreenMart")
+
+    st.write("Quick questions:")
+    cols = st.columns(len(CHAT_OPTIONS))
+    for i, opt in enumerate(CHAT_OPTIONS):
+        if cols[i].button(opt, key=f"chatopt_{i}", use_container_width=True):
+            send_chat_message(opt)
+            st.rerun()
+
+    for msg in st.session_state.chat_history:
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
+
+    user_input = st.chat_input("Ask me anything about GreenMart...")
+    if user_input:
+        send_chat_message(user_input)
+        st.rerun()
+
+    if st.session_state.chat_history:
+        st.button("🗑️ Clear chat", on_click=lambda: st.session_state.chat_history.clear())
+
+# ----------------------------------------------------------------------
+# ROUTER
+# ----------------------------------------------------------------------
+if st.session_state.page == "home":
+    render_home()
+elif st.session_state.page == "shopping":
+    render_shopping()
+elif st.session_state.page == "predict":
+    render_predict()
+elif st.session_state.page == "chat":
+    render_chat()

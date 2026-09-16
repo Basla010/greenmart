@@ -5,3 +5,6 @@ scikit-learn
 requests
 matplotlib
 seaborn
+transformers
+torch
+sentencepiece
